@@ -8,7 +8,7 @@ const GRAPHQL_MAX_ENTRIES = 250;
 const SITEMAPS_LIMIT = 300;
 const MAX_URLS = 50000;
 
-var Sitemap = {
+const Sitemap = {
   config: {
     cursors: {
       products: null,
@@ -183,7 +183,7 @@ export default Sitemap;
 // `;
 
 const SITEMAP_PRODUCT_QUERY = `#graphql
-query Sitemap(
+query SitemapProducts(
   $urlLimits: Int
   $language: LanguageCode
   $cursor: String
@@ -213,7 +213,7 @@ query Sitemap(
 `;
 
 const SITEMAP_COLLECTION_QUERY = `#graphql
-query Sitemap(
+query SitemapCollections(
   $urlLimits: Int
   $language: LanguageCode
   $cursor: String
@@ -238,7 +238,7 @@ query Sitemap(
 `;
 
 const SITEMAP_PAGE_QUERY = `#graphql
-query Sitemap(
+query SitemapPages(
   $urlLimits: Int
   $language: LanguageCode
   $cursor: String
