@@ -79,7 +79,7 @@ function generateIndexedSitemap({baseUrl, entries}) {
 }
 
 function generateSingleSitemap({data, baseUrl}) {
-  const urls = Sitemap.generateSitemapUrls(data, baseUrl);
+  const urls = Sitemap.generateSitemapUrls({data, baseUrl});
 
   return `
     <urlset
