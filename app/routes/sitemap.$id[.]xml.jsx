@@ -1,13 +1,11 @@
 import Sitemap from '~/components/Sitemap.jsx';
-import {redirect} from '@shopify/remix-oxygen';
 
 /**
  * @param {LoaderFunctionArgs}
  */
 export async function loader({params, request, context: {storefront}}) {
-  console.debug(params);
   if (!params.id) {
-    return redirect('/sitemap.xml');
+    return redirectToMainSitemap();
   }
 
   let data = {
@@ -39,6 +37,10 @@ export async function loader({params, request, context: {storefront}}) {
     index: params.id,
     baseUrl: new URL(request.url).origin,
   });
+
+  if (!sitemap) {
+    return redirectToMainSitemap();
+  }
 
   return new Response(sitemap, {
     headers: {
@@ -74,6 +76,21 @@ function generateSitemap({data, index = 1, baseUrl}) {
     }
   });
 
+  let sitemapCount = 0;
+  urlsByIndex.forEach(function (items, index) {
+    if (undefined !== items) {
+      sitemapCount++;
+    }
+  });
+
+  if (2 > sitemapCount) {
+    return undefined;
+  }
+
+  if (!urlsByIndex[index]) {
+    return undefined;
+  }
+
   return `
     <urlset
       xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
@@ -81,6 +98,15 @@ function generateSitemap({data, index = 1, baseUrl}) {
     >
       ${urlsByIndex[index].map(Sitemap.renderUrlTag).join('')}
     </urlset>`;
+}
+
+function redirectToMainSitemap() {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: '/sitemap.xml',
+    },
+  });
 }
 
 /**
