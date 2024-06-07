@@ -3,7 +3,7 @@ import Sitemap from '~/components/Sitemap.jsx';
 /**
  * @param {LoaderFunctionArgs}
  */
-export async function loader({request, context: {storefront}}) {
+export async function loader({request, context}) {
   let data = {
     sitemaps: {
       products: null,
@@ -15,9 +15,9 @@ export async function loader({request, context: {storefront}}) {
   /* fetch simultaneously */
   [data.sitemaps.products, data.sitemaps.collections, data.sitemaps.pages] =
     await Promise.all([
-      Sitemap.fetchProducts({storefront}),
-      Sitemap.fetchCollections({storefront}),
-      Sitemap.fetchPages({storefront}),
+      Sitemap.fetchProducts({context}),
+      Sitemap.fetchCollections({context}),
+      Sitemap.fetchPages({context}),
     ]);
 
   if (
@@ -28,7 +28,11 @@ export async function loader({request, context: {storefront}}) {
     throw new Response('No data found', {status: 404});
   }
 
-  const sitemap = generateSitemap({data, baseUrl: new URL(request.url).origin});
+  const sitemap = await generateSitemap({
+    context,
+    data,
+    baseUrl: new URL(request.url).origin,
+  });
 
   return new Response(sitemap, {
     headers: {
@@ -45,21 +49,24 @@ export async function loader({request, context: {storefront}}) {
  *   baseUrl: string;
  * }}
  */
-function generateSitemap({data, baseUrl}) {
+async function generateSitemap({context, data, baseUrl}) {
   const entries =
     data.sitemaps.products.nodes.length +
     data.sitemaps.collections.nodes.length +
     data.sitemaps.pages.nodes.length;
 
-  if (entries > Sitemap.getMaxUrls()) {
-    return generateIndexedSitemap({data, baseUrl, entries});
+  const sitemapChunkSize = await Sitemap.getSitemapUrlChunkSize({context});
+  if (entries > sitemapChunkSize) {
+    return await generateIndexedSitemap({context, data, baseUrl, entries});
   }
 
-  return generateSingleSitemap({data, baseUrl});
+  return await generateSingleSitemap({context, data, baseUrl});
 }
 
-function generateIndexedSitemap({baseUrl, entries}) {
-  let numberOfSitemaps = Math.ceil(entries / Sitemap.getMaxUrls());
+async function generateIndexedSitemap({context, baseUrl, entries}) {
+  let numberOfSitemaps = Math.ceil(
+    entries / (await Sitemap.getSitemapUrlChunkSize({context})),
+  );
 
   let urls = [];
   let count = 1;
@@ -78,8 +85,8 @@ function generateIndexedSitemap({baseUrl, entries}) {
   `.trim();
 }
 
-function generateSingleSitemap({data, baseUrl}) {
-  const urls = Sitemap.generateSitemapUrls({data, baseUrl});
+async function generateSingleSitemap({data, baseUrl}) {
+  const urls = await Sitemap.generateSitemapUrls({data, baseUrl});
 
   return `
     <urlset
