@@ -3,7 +3,7 @@ import Sitemap from '~/components/Sitemap.jsx';
 /**
  * @param {LoaderFunctionArgs}
  */
-export async function loader({params, request, context: {storefront}}) {
+export async function loader({params, request, context}) {
   if (!params.id) {
     return redirectToMainSitemap();
   }
@@ -19,9 +19,9 @@ export async function loader({params, request, context: {storefront}}) {
   /* fetch simultaneously */
   [data.sitemaps.products, data.sitemaps.collections, data.sitemaps.pages] =
     await Promise.all([
-      Sitemap.fetchProducts({storefront}),
-      Sitemap.fetchCollections({storefront}),
-      Sitemap.fetchPages({storefront}),
+      Sitemap.fetchProducts({context}),
+      Sitemap.fetchCollections({context}),
+      Sitemap.fetchPages({context}),
     ]);
 
   if (
@@ -32,7 +32,8 @@ export async function loader({params, request, context: {storefront}}) {
     throw new Response('No data found', {status: 404});
   }
 
-  const sitemap = generateSitemap({
+  const sitemap = await generateSitemap({
+    context,
     data,
     index: params.id,
     baseUrl: new URL(request.url).origin,
@@ -51,12 +52,15 @@ export async function loader({params, request, context: {storefront}}) {
   });
 }
 
-function generateSitemap({data, index = 1, baseUrl}) {
+async function generateSitemap({context, data, index = 1, baseUrl}) {
   let urlsByIndex = [];
   let currentIndex = 1;
   let count = 1;
 
-  const urls = Sitemap.generateSitemapUrls({data, baseUrl});
+  const [sitemapChunkSize, urls] = await Promise.all([
+    Sitemap.getSitemapUrlChunkSize({context}),
+    Sitemap.generateSitemapUrls({context, data, baseUrl}),
+  ]);
 
   urls.forEach(function (url) {
     if (currentIndex <= index) {
@@ -64,7 +68,7 @@ function generateSitemap({data, index = 1, baseUrl}) {
         urlsByIndex[currentIndex] = [];
       }
 
-      if (count < Sitemap.getMaxUrls()) {
+      if (count < sitemapChunkSize) {
         urlsByIndex[currentIndex].push(url);
         count++;
       } else {
