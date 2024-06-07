@@ -10,6 +10,7 @@ const MAX_URLS = 50000;
 
 const Sitemap = {
   config: {
+    chunkSize: null,
     cursors: {
       products: null,
       collections: null,
@@ -17,25 +18,26 @@ const Sitemap = {
     },
   },
 
-  async fetchProducts({storefront}) {
+  async fetchProducts({context}) {
     const query = SITEMAP_PRODUCT_QUERY;
     const type = 'products';
-    return Sitemap.fetchAll({storefront, query, type});
+    return Sitemap.fetchAll({context, query, type});
   },
 
-  async fetchCollections({storefront}) {
+  async fetchCollections({context}) {
     const query = SITEMAP_COLLECTION_QUERY;
     const type = 'collections';
-    return Sitemap.fetchAll({storefront, query, type});
+    return Sitemap.fetchAll({context, query, type});
   },
 
-  async fetchPages({storefront}) {
+  async fetchPages({context}) {
     const query = SITEMAP_PAGE_QUERY;
     const type = 'pages';
-    return Sitemap.fetchAll({storefront, query, type});
+    return Sitemap.fetchAll({context, query, type});
   },
 
-  async fetchAll({storefront, query, type, depth}) {
+  async fetchAll({context, query, type, depth}) {
+    const {storefront} = await context;
     let continueFetch = false;
     const sitemapData = await storefront.query(query, {
       variables: {
@@ -60,7 +62,7 @@ const Sitemap = {
 
     if (continueFetch && depth < SITEMAPS_LIMIT) {
       depth = depth + 1;
-      let dataToMerge = await Sitemap.fetchProducts({storefront, depth});
+      let dataToMerge = await Sitemap.fetchProducts({context});
 
       if (dataToMerge && dataToMerge.nodes) {
         dataToMerge.nodes.forEach(function (element) {
@@ -130,8 +132,19 @@ const Sitemap = {
     return [...products, ...collections, ...pages];
   },
 
-  getMaxUrls() {
-    return MAX_URLS;
+  async getSitemapUrlChunkSize({context}) {
+    if (undefined === context) {
+      throw new Error('No context given');
+    }
+
+    if (null === Sitemap.config.chunkSize) {
+      Sitemap.config.chunkSize = MAX_URLS;
+      if (context && context.env.SITEMAP_URL_CHUNK_SIZE) {
+        Sitemap.config.chunkSize = context.env.SITEMAP_URL_CHUNK_SIZE;
+      }
+    }
+
+    return Sitemap.config.chunkSize;
   },
 
   getQueryUrlLimit() {
