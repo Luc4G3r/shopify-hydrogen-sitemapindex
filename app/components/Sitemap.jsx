@@ -5,8 +5,22 @@ import {flattenConnection} from '@shopify/hydrogen';
  * allows querying only 250 resources per pagination page
  */
 const GRAPHQL_MAX_ENTRIES = 250;
+/**
+ * limit number of indexed sidemaps files
+ */
 const SITEMAPS_LIMIT = 300;
+/**
+ * limit number of URLS in sidemap files
+ */
 const MAX_URLS = 50000;
+/**
+ * default API call cache settings
+ */
+const CACHE_SETTINGS_DEFAULT = {
+  mode: 'public',
+  maxAge: 1,
+  staleWhileRevalidate: 300,
+};
 
 const Sitemap = {
   config: {
@@ -16,64 +30,212 @@ const Sitemap = {
       collections: null,
       pages: null,
     },
+    cacheSettings: null,
   },
 
-  async fetchProducts({context}) {
+  /**
+   * fetch products
+   *
+   * @param env
+   * @param storefront
+   * @param limit
+   * @returns {Promise<*>}
+   */
+  async fetchProducts({env, storefront, limit}) {
     const query = SITEMAP_PRODUCT_QUERY;
     const type = 'products';
-    return Sitemap.fetchAll({context, query, type});
+    let result = null;
+    if (limit) {
+      result = Sitemap.fetchByType({env, storefront, query, type, limit});
+    }
+    result = Sitemap.fetchAllByType({env, storefront, query, type});
+    Sitemap.resetCursor({type});
+
+    return result;
   },
 
-  async fetchCollections({context}) {
+  /**
+   * fetch collections
+   *
+   * @param env
+   * @param storefront
+   * @param limit
+   * @returns {Promise<*>}
+   */
+  async fetchCollections({env, storefront, limit}) {
     const query = SITEMAP_COLLECTION_QUERY;
     const type = 'collections';
-    return Sitemap.fetchAll({context, query, type});
+    let result = null;
+    if (limit) {
+      result = Sitemap.fetchByType({env, storefront, query, type, limit});
+    }
+    result = Sitemap.fetchAllByType({env, storefront, query, type});
+    Sitemap.resetCursor({type});
+
+    return result;
   },
 
-  async fetchPages({context}) {
+  /**
+   * fetch pages
+   *
+   * @param env
+   * @param storefront
+   * @param limit
+   * @returns {Promise<*>}
+   */
+  async fetchPages({env, storefront, limit}) {
     const query = SITEMAP_PAGE_QUERY;
     const type = 'pages';
-    return Sitemap.fetchAll({context, query, type});
+    let result = null;
+    if (limit) {
+      result = Sitemap.fetchByType({env, storefront, query, type, limit});
+    }
+    result = Sitemap.fetchAllByType({env, storefront, query, type});
+    Sitemap.resetCursor({type});
+
+    return result;
   },
 
-  async fetchAll({context, query, type, depth}) {
-    const {storefront} = await context;
-    let continueFetch = false;
-    const sitemapData = await storefront.query(query, {
-      variables: {
-        urlLimits: Sitemap.getQueryUrlLimit(),
-        language: storefront.i18n.language,
-        cursor: Sitemap.config.cursors[type],
-      },
-      cache: storefront.CacheLong(),
-    });
-
-    if (Object.prototype.hasOwnProperty.call(sitemapData[type], 'pageInfo')) {
-      if (
-        Object.prototype.hasOwnProperty.call(
-          sitemapData[type].pageInfo,
-          'hasNextPage',
-        )
-      ) {
-        continueFetch = sitemapData[type].pageInfo.hasNextPage;
-        Sitemap[type] = sitemapData[type].pageInfo.endCursor ?? null;
-      }
+  /**
+   * fetch next chunk of entries
+   *
+   * @param env
+   * @param storefront
+   * @param query
+   * @param type
+   * @returns {Promise<*>}
+   */
+  async fetchNextChunkByType({env, storefront, query, type}) {
+    if (!env) {
+      throw new Error('Environment is not defined');
     }
 
-    if (continueFetch && depth < SITEMAPS_LIMIT) {
-      depth = depth + 1;
-      let dataToMerge = await Sitemap.fetchProducts({context});
+    if (!storefront) {
+      throw new Error('Storefront is not defined');
+    }
 
-      if (dataToMerge && dataToMerge.nodes) {
-        dataToMerge.nodes.forEach(function (element) {
+    let queryVariables = await Sitemap.getQueryVariables({
+      env,
+      storefront,
+      type,
+    });
+
+    return storefront.query(query, {
+      variables: queryVariables,
+      cache: storefront.CacheCustom(Sitemap.getCacheSettings({env})),
+    });
+  },
+
+  /**
+   * fetch entries by type
+   *
+   * @param env
+   * @param storefront
+   * @param query
+   * @param type
+   * @param limit
+   * @returns {Promise<*>}
+   */
+  async fetchByType({env, storefront, query, type, limit}) {
+    if (!type) {
+      throw new Error('Type is not defined');
+    }
+
+    let continueFetch = true;
+
+    let sitemapData = {};
+    sitemapData[type] = {
+      nodes: [],
+    };
+
+    while (continueFetch) {
+      continueFetch = false;
+      const currentSitemapData = await Sitemap.fetchNextChunkByType({
+        env,
+        storefront,
+        query,
+        type,
+      });
+
+      if (Object.prototype.hasOwnProperty.call(currentSitemapData, 'errors')) {
+        continueFetch = false;
+        currentSitemapData.errors.forEach(function (error) {
+          console.error(error);
+        });
+        return sitemapData[type];
+      }
+
+      const nodes = flattenConnection(currentSitemapData[type]);
+      if (0 !== nodes.length) {
+        nodes.forEach(function (element) {
           sitemapData[type].nodes.push(element);
         });
+
+        if (
+          Object.prototype.hasOwnProperty.call(
+            currentSitemapData[type],
+            'pageInfo',
+          )
+        ) {
+          if (
+            Object.prototype.hasOwnProperty.call(
+              currentSitemapData[type].pageInfo,
+              'hasNextPage',
+            )
+          ) {
+            continueFetch = currentSitemapData[type].pageInfo.hasNextPage;
+
+            if (continueFetch) {
+              const cursorValue =
+                currentSitemapData[type].pageInfo.endCursor ?? null;
+
+              Sitemap.setCursor({
+                type,
+                value: cursorValue,
+              });
+            }
+          }
+        }
+      }
+
+      if (sitemapData[type].nodes.length > limit) {
+        console.log('Reached limit of sitemap files.');
+        continueFetch = false;
       }
     }
 
     return sitemapData[type];
   },
 
+  /**
+   * fetch all entries by type
+   *
+   * @param env
+   * @param storefront
+   * @param query
+   * @param type
+   * @returns {Promise<*>}
+   */
+  async fetchAllByType({env, storefront, query, type}) {
+    const limit =
+      SITEMAPS_LIMIT * (await Sitemap.getSitemapUrlChunkSize({env}));
+
+    return Sitemap.fetchByType({
+      env,
+      storefront,
+      query,
+      type,
+      limit,
+    });
+  },
+
+  /**
+   * generate urls from data entries
+   *
+   * @param data
+   * @param baseUrl
+   * @returns {*[]}
+   */
   generateSitemapUrls({data, baseUrl}) {
     const products = flattenConnection(data.sitemaps.products)
       .filter((product) => product.onlineStoreUrl)
@@ -132,28 +294,121 @@ const Sitemap = {
     return [...products, ...collections, ...pages];
   },
 
-  async getSitemapUrlChunkSize({context}) {
-    if (undefined === context) {
-      throw new Error('No context given');
+  /**
+   * get configured sitemap chunk size
+   *
+   * @param env
+   * @returns {Promise<number>}
+   */
+  async getSitemapUrlChunkSize({env}) {
+    if (undefined === env) {
+      throw new Error('No environment given');
     }
 
-    if (null === Sitemap.config.chunkSize) {
-      Sitemap.config.chunkSize = MAX_URLS;
-      if (context && context.env.SITEMAP_URL_CHUNK_SIZE) {
-        Sitemap.config.chunkSize = context.env.SITEMAP_URL_CHUNK_SIZE;
+    if (
+      null === Sitemap.config.chunkSize ||
+      undefined === Sitemap.config.chunkSize ||
+      Number.isNaN(Sitemap.config.chunkSize)
+    ) {
+      Sitemap.config.chunkSize = Sitemap.getQueryUrlLimit();
+      if (env && env.SITEMAP_URL_CHUNK_SIZE) {
+        let chunkSize = env.SITEMAP_URL_CHUNK_SIZE;
+
+        /* chunkSize might be NaN */
+        if (Number.isNaN(chunkSize)) {
+          console.error('SITEMAP_URL_CHUNK_SIZE is NaN');
+        } else {
+          Sitemap.config.chunkSize = chunkSize;
+        }
       }
     }
 
-    return Sitemap.config.chunkSize;
+    return parseInt(Sitemap.config.chunkSize);
   },
 
+  /**
+   * get cache settings for API calls
+   *
+   * @param env
+   * @returns {null}
+   */
+  getCacheSettings({env}) {
+    if (
+      null === Sitemap.config.cacheSettings ||
+      undefined === Sitemap.config.cacheSettings
+    ) {
+      Sitemap.config.cacheSettings = CACHE_SETTINGS_DEFAULT;
+      if (env && env.SITEMAP_GRAPHQL_CACHE_SETTINGS_JSON) {
+        try {
+          Sitemap.config.cacheSettings = JSON.parse(
+            env.SITEMAP_GRAPHQL_CACHE_SETTINGS_JSON,
+          );
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+
+    return Sitemap.config.cacheSettings;
+  },
+
+  /**
+   * get limit for API calls
+   *
+   * @returns {number}
+   */
   getQueryUrlLimit() {
     if (GRAPHQL_MAX_ENTRIES < MAX_URLS) {
       return GRAPHQL_MAX_ENTRIES;
     }
+
     return MAX_URLS;
   },
 
+  getCursor({type}) {
+    if (!type) {
+      throw new Error('Cannot get cursor for undefined');
+    }
+
+    return Sitemap.config.cursors[type];
+  },
+
+  setCursor({type, value}) {
+    if (!type) {
+      throw new Error('Cannot get cursor for undefined');
+    }
+
+    Sitemap.config.cursors[type] = value;
+  },
+
+  resetCursor({type}) {
+    Sitemap.config.cursors[type] = null;
+  },
+
+  /**
+   * get parameters for API calls
+   *
+   * @param env
+   * @param storefront
+   * @param type
+   * @returns {Promise<{cursor: *, language: , urlLimits: number}>}
+   */
+  async getQueryVariables({env, storefront, type}) {
+    const urlLimits = await Sitemap.getSitemapUrlChunkSize({env});
+
+    return {
+      urlLimits,
+      language: storefront.i18n.language,
+      cursor: Sitemap.getCursor({type}),
+    };
+  },
+
+  /**
+   * encode for XML
+   *
+   * @param string
+   * @returns {*}
+   */
   xmlEncode(string) {
     return string.replace(/[&<>'"]/g, (char) => `&#${char.charCodeAt(0)};`);
   },
