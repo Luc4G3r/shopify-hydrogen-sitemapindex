@@ -4,6 +4,8 @@ import Sitemap from '~/components/Sitemap.jsx';
  * @param {LoaderFunctionArgs}
  */
 export async function loader({request, context}) {
+  const {env, storefront} = context;
+
   let data = {
     sitemaps: {
       products: null,
@@ -15,21 +17,23 @@ export async function loader({request, context}) {
   /* fetch simultaneously */
   [data.sitemaps.products, data.sitemaps.collections, data.sitemaps.pages] =
     await Promise.all([
-      Sitemap.fetchProducts({context}),
-      Sitemap.fetchCollections({context}),
-      Sitemap.fetchPages({context}),
+      Sitemap.fetchProducts({env, storefront}),
+      Sitemap.fetchCollections({env, storefront}),
+      Sitemap.fetchPages({env, storefront}),
     ]);
 
   if (
-    0 === data.sitemaps.products.nodes.length &&
-    0 === data.sitemaps.collections.nodes.length &&
-    0 === data.sitemaps.pages.nodes.length
+    (!data.sitemaps.products?.nodes ||
+      0 === data.sitemaps.products.nodes.length) &&
+    (!data.sitemaps.collections?.nodes ||
+      0 === data.sitemaps.collections.nodes.length) &&
+    (!data.sitemaps.pages?.nodes || 0 === data.sitemaps.pages.nodes.length)
   ) {
     throw new Response('No data found', {status: 404});
   }
 
-  const sitemap = await generateSitemap({
-    context,
+  const sitemap = await generateSitemapContent({
+    env,
     data,
     baseUrl: new URL(request.url).origin,
   });
@@ -37,8 +41,11 @@ export async function loader({request, context}) {
   return new Response(sitemap, {
     headers: {
       'Content-Type': 'application/xml',
-
       'Cache-Control': `max-age=${60 * 60 * 24}`,
+
+      // 'Cache-Control': `public, max-age=${
+      //   60 * 60 * 24
+      // }, stale-while-revalidate=300`,
     },
   });
 }
@@ -49,23 +56,23 @@ export async function loader({request, context}) {
  *   baseUrl: string;
  * }}
  */
-async function generateSitemap({context, data, baseUrl}) {
+async function generateSitemapContent({env, data, baseUrl}) {
   const entries =
     data.sitemaps.products.nodes.length +
     data.sitemaps.collections.nodes.length +
     data.sitemaps.pages.nodes.length;
 
-  const sitemapChunkSize = await Sitemap.getSitemapUrlChunkSize({context});
+  const sitemapChunkSize = await Sitemap.getSitemapUrlChunkSize({env});
   if (entries > sitemapChunkSize) {
-    return await generateIndexedSitemap({context, data, baseUrl, entries});
+    return await generateIndexedSitemapContent({env, data, baseUrl, entries});
   }
 
-  return await generateSingleSitemap({context, data, baseUrl});
+  return await generateSingleSitemapContent({data, baseUrl});
 }
 
-async function generateIndexedSitemap({context, baseUrl, entries}) {
+async function generateIndexedSitemapContent({env, baseUrl, entries}) {
   let numberOfSitemaps = Math.ceil(
-    entries / (await Sitemap.getSitemapUrlChunkSize({context})),
+    entries / (await Sitemap.getSitemapUrlChunkSize({env})),
   );
 
   let urls = [];
@@ -85,7 +92,7 @@ async function generateIndexedSitemap({context, baseUrl, entries}) {
   `.trim();
 }
 
-async function generateSingleSitemap({data, baseUrl}) {
+async function generateSingleSitemapContent({data, baseUrl}) {
   const urls = await Sitemap.generateSitemapUrls({data, baseUrl});
 
   return `
