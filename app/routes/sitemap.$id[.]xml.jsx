@@ -8,6 +8,10 @@ export async function loader({params, request, context}) {
     return redirectToMainSitemap();
   }
 
+  const sitemapIndex = parseInt(params.id);
+
+  const {env, storefront} = context;
+
   let data = {
     sitemaps: {
       products: null,
@@ -19,23 +23,25 @@ export async function loader({params, request, context}) {
   /* fetch simultaneously */
   [data.sitemaps.products, data.sitemaps.collections, data.sitemaps.pages] =
     await Promise.all([
-      Sitemap.fetchProducts({context}),
-      Sitemap.fetchCollections({context}),
-      Sitemap.fetchPages({context}),
+      Sitemap.fetchProducts({env, storefront}),
+      Sitemap.fetchCollections({env, storefront}),
+      Sitemap.fetchPages({env, storefront}),
     ]);
 
   if (
-    0 === data.sitemaps.products.nodes.length &&
-    0 === data.sitemaps.collections.nodes.length &&
-    0 === data.sitemaps.pages.nodes.length
+    (!data.sitemaps.products?.nodes ||
+      0 === data.sitemaps.products.nodes.length) &&
+    (!data.sitemaps.collections?.nodes ||
+      0 === data.sitemaps.collections.nodes.length) &&
+    (!data.sitemaps.pages?.nodes || 0 === data.sitemaps.pages.nodes.length)
   ) {
     throw new Response('No data found', {status: 404});
   }
 
-  const sitemap = await generateSitemap({
-    context,
+  const sitemap = await generateIndexedSitemapContent({
+    env,
     data,
-    index: params.id,
+    sitemapIndex,
     baseUrl: new URL(request.url).origin,
   });
 
@@ -52,46 +58,40 @@ export async function loader({params, request, context}) {
   });
 }
 
-async function generateSitemap({context, data, index = 1, baseUrl}) {
-  let urlsByIndex = [];
+async function generateIndexedSitemapContent({
+  env,
+  data,
+  sitemapIndex = 1,
+  baseUrl,
+}) {
+  let urlsByIndex = {};
   let currentIndex = 1;
-  let count = 1;
+  let count = 0;
 
-  const [sitemapChunkSize, urls] = await Promise.all([
-    Sitemap.getSitemapUrlChunkSize({context}),
-    Sitemap.generateSitemapUrls({context, data, baseUrl}),
-  ]);
+  const sitemapChunkSize = await Sitemap.getSitemapUrlChunkSize({env});
 
-  urls.forEach(function (url) {
-    if (currentIndex <= index) {
-      if (!urlsByIndex[currentIndex]) {
-        urlsByIndex[currentIndex] = [];
-      }
+  const urls = await Sitemap.generateSitemapUrls({data, baseUrl});
 
-      if (count < sitemapChunkSize) {
-        urlsByIndex[currentIndex].push(url);
-        count++;
-      } else {
-        currentIndex++;
-        urlsByIndex[currentIndex] = [];
-        urlsByIndex[currentIndex].push(url);
-        count = 1;
-      }
-    }
-  });
-
-  let sitemapCount = 0;
-  urlsByIndex.forEach(function (items, index) {
-    if (undefined !== items) {
-      sitemapCount++;
-    }
-  });
-
-  if (2 > sitemapCount) {
+  /* redirect to single sitemap */
+  if (urls.length < sitemapChunkSize) {
     return undefined;
   }
 
-  if (!urlsByIndex[index]) {
+  urls.forEach(function (url) {
+    if (currentIndex === sitemapIndex) {
+      if (!urlsByIndex[currentIndex]) {
+        urlsByIndex[currentIndex] = [];
+      }
+      urlsByIndex[currentIndex].push(url);
+    }
+    count++;
+    if (count >= sitemapChunkSize) {
+      currentIndex++;
+      count = 0;
+    }
+  });
+
+  if (!urlsByIndex[sitemapIndex]) {
     return undefined;
   }
 
@@ -100,7 +100,7 @@ async function generateSitemap({context, data, index = 1, baseUrl}) {
       xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
       xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
     >
-      ${urlsByIndex[index].map(Sitemap.renderUrlTag).join('')}
+      ${urlsByIndex[sitemapIndex].map(Sitemap.renderUrlTag).join('')}
     </urlset>`;
 }
 
